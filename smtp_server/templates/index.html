@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>SMTP Server</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.min.js"></script>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #f5f5f3;
+    --surface: #ffffff;
+    --surface2: #f9f9f8;
+    --border: #e3e2de;
+    --border-strong: #c9c8c4;
+    --text: #1a1a18;
+    --text-secondary: #5a5a56;
+    --text-muted: #9a9a94;
+    --accent: #1a6ef5;
+    --accent-bg: #eef4ff;
+    --success: #1a8a4a;
+    --success-bg: #edfaf3;
+    --error: #d03030;
+    --error-bg: #fff0f0;
+    --warning: #b06010;
+    --warning-bg: #fff8ee;
+    --radius: 8px;
+    --mono: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+  }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    background: var(--bg); color: var(--text);
+    min-height: 100vh; line-height: 1.5;
+  }
+
+  header {
+    background: var(--surface); border-bottom: 1px solid var(--border);
+    padding: 0 1.5rem; height: 56px;
+    display: flex; align-items: center; justify-content: space-between;
+    position: sticky; top: 0; z-index: 10;
+  }
+  .header-left { display: flex; align-items: center; gap: 12px; }
+  .logo { font-size: 15px; font-weight: 600; }
+  .logo span { color: var(--accent); }
+  .server-addr { font-size: 12px; font-family: var(--mono); color: var(--text-muted); }
+  .status-pill {
+    display: flex; align-items: center; gap: 6px;
+    font-size: 12px; font-weight: 500; padding: 4px 12px;
+    border-radius: 99px; border: 1px solid;
+  }
+  .status-pill.online { background: var(--success-bg); color: var(--success); border-color: #b0e8c8; }
+  .dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; animation: pulse 1.4s infinite; }
+  @keyframes pulse { 0%,100%{opacity:1}50%{opacity:0.3} }
+
+  main { max-width: 1100px; margin: 0 auto; padding: 1.5rem; display: flex; flex-direction: column; gap: 1.25rem; }
+
+  .metrics {
+    display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px;
+  }
+  .metric {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 1rem 1.25rem;
+  }
+  .metric-label { font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 4px; }
+  .metric-value { font-size: 28px; font-weight: 600; line-height: 1; }
+  .metric-value.green { color: var(--success); }
+  .metric-value.red   { color: var(--error); }
+  .metric-value.blue  { color: var(--accent); }
+
+  .grid { display: grid; grid-template-columns: 420px 1fr; gap: 1.25rem; }
+  @media(max-width: 860px) { .grid { grid-template-columns: 1fr; } .metrics { grid-template-columns: repeat(2,1fr); } }
+
+  .card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 12px; overflow: hidden;
+  }
+  .card-header {
+    padding: 0.85rem 1.25rem; border-bottom: 1px solid var(--border);
+    background: var(--surface2); display: flex; align-items: center; justify-content: space-between;
+  }
+  .card-title { font-size: 13px; font-weight: 600; }
+  .card-body { padding: 1.25rem; }
+
+  .form-group { margin-bottom: 12px; }
+  label { display: block; font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 4px; }
+  input, textarea {
+    width: 100%; padding: 8px 12px; font-size: 13px;
+    border: 1px solid var(--border); border-radius: var(--radius);
+    background: var(--surface2); color: var(--text);
+    font-family: inherit; transition: border-color 0.15s;
+  }
+  input:focus, textarea:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(26,110,245,0.1); }
+  textarea { resize: vertical; min-height: 90px; }
+
+  .btn {
+    width: 100%; padding: 10px; font-size: 13px; font-weight: 600;
+    border: 1px solid var(--border-strong); border-radius: var(--radius);
+    background: var(--text); color: #fff; cursor: pointer;
+    display: flex; align-items: center; justify-content: center; gap: 8px;
+    transition: background 0.15s, transform 0.1s;
+  }
+  .btn:hover:not(:disabled) { background: #333; }
+  .btn:active:not(:disabled) { transform: scale(0.98); }
+  .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  .config-bar {
+    font-size: 11px; font-family: var(--mono); color: var(--text-secondary);
+    background: var(--surface2); border: 1px solid var(--border); border-radius: var(--radius);
+    padding: 8px 12px; margin-bottom: 1rem; display: flex; gap: 16px; flex-wrap: wrap;
+  }
+  .config-bar span { color: var(--text-muted); }
+
+  .log-wrap { max-height: 420px; overflow-y: auto; }
+  .log-entry {
+    display: grid; grid-template-columns: 60px 1fr 70px;
+    gap: 8px; align-items: start; padding: 7px 1rem;
+    border-bottom: 1px solid var(--border); font-size: 12px;
+    font-family: var(--mono);
+  }
+  .log-entry:last-child { border-bottom: none; }
+  .tag {
+    font-size: 10px; font-weight: 600; padding: 2px 7px; border-radius: 99px;
+    text-align: center; border: 1px solid transparent;
+  }
+  .tag.success { background: var(--success-bg); color: var(--success); border-color: #b0e8c8; }
+  .tag.error   { background: var(--error-bg);   color: var(--error);   border-color: #f5b0b0; }
+  .tag.info    { background: var(--accent-bg);   color: var(--accent);  border-color: #bbd4fa; }
+  .tag.command { background: #f5f0ff; color: #7030c0; border-color: #d0b8f8; }
+  .log-msg { color: var(--text-secondary); line-height: 1.4; }
+  .log-to  { font-size: 10px; color: var(--text-muted); }
+  .log-time { color: var(--text-muted); font-size: 10px; text-align: right; }
+  .log-empty { padding: 2rem; text-align: center; color: var(--text-muted); font-size: 13px; font-family: inherit; }
+
+  .clear-btn { font-size: 11px; color: var(--text-muted); background: none; border: none; cursor: pointer; padding: 2px 8px; }
+  .clear-btn:hover { color: var(--error); }
+
+  #toast {
+    position: fixed; bottom: 1.5rem; right: 1.5rem;
+    padding: 10px 18px; border-radius: var(--radius); font-size: 13px;
+    border: 1px solid; max-width: 320px;
+    transform: translateY(0); opacity: 1; transition: all 0.3s;
+    z-index: 100;
+  }
+  #toast.ok  { background: var(--success-bg); color: var(--success); border-color: #b0e8c8; }
+  #toast.err { background: var(--error-bg);   color: var(--error);   border-color: #f5b0b0; }
+  #toast.hide { opacity: 0; transform: translateY(8px); pointer-events: none; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="header-left">
+    <div class="logo">SMTP <span>Server</span></div>
+    <div class="server-addr" id="srv-addr">Connecting…</div>
+  </div>
+  <div style="display:flex;align-items:center;gap:12px;">
+    <div style="font-size:12px;color:var(--text-muted);" id="conn-label">0 clients</div>
+    <div class="status-pill online"><span class="dot"></span> Online</div>
+  </div>
+</header>
+
+<main>
+  <div class="metrics">
+    <div class="metric"><div class="metric-label">Sent</div><div class="metric-value green" id="m-sent">0</div></div>
+    <div class="metric"><div class="metric-label">Failed</div><div class="metric-value red" id="m-fail">0</div></div>
+    <div class="metric"><div class="metric-label">Queue</div><div class="metric-value blue" id="m-queue">0</div></div>
+    <div class="metric"><div class="metric-label">Active connections</div><div class="metric-value" id="m-conn">0</div></div>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <div class="card-header"><span class="card-title">Compose email</span></div>
+      <div class="card-body">
+        <div class="config-bar" id="cfg-bar">
+          <span>host</span> loading… &nbsp;
+          <span>port</span> … &nbsp;
+          <span>user</span> …
+        </div>
+        <div class="form-group">
+          <label>From</label>
+          <input id="f-from" placeholder="sender@yourdomain.com" />
+        </div>
+        <div class="form-group">
+          <label>To</label>
+          <input id="f-to" placeholder="recipient@domain.com" />
+        </div>
+        <div class="form-group">
+          <label>Subject</label>
+          <input id="f-subj" placeholder="Email subject" />
+        </div>
+        <div class="form-group">
+          <label>Message</label>
+          <textarea id="f-body" placeholder="Write your message here…"></textarea>
+        </div>
+        <button class="btn" id="send-btn" onclick="sendEmail()">
+          &#9993; Send via SMTP
+        </button>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header">
+        <span class="card-title">Live SMTP log</span>
+        <button class="clear-btn" onclick="clearLog()">Clear</button>
+      </div>
+      <div class="log-wrap">
+        <div id="log-list">
+          <div class="log-empty">Server ready — send an email to see the SMTP protocol log.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</main>
+
+<div id="toast" class="hide"></div>
+
+<script>
+const socket = io();
+let firstLog = true;
+
+socket.on('connect', () => {
+  document.getElementById('conn-label').textContent = '1 client';
+  loadConfig();
+});
+
+socket.on('stats', s => {
+  document.getElementById('m-sent').textContent  = s.sent;
+  document.getElementById('m-fail').textContent  = s.failed;
+  document.getElementById('m-queue').textContent = s.queue;
+  document.getElementById('m-conn').textContent  = s.connections;
+});
+
+socket.on('log', entry => {
+  if (firstLog) {
+    document.getElementById('log-list').innerHTML = '';
+    firstLog = false;
+  }
+  const list = document.getElementById('log-list');
+  const el = document.createElement('div');
+  el.className = 'log-entry';
+  el.innerHTML = `
+    <span class="tag ${entry.tag}">${entry.tag}</span>
+    <div class="log-msg">${entry.message}${entry.to ? `<div class="log-to">→ ${entry.to}</div>` : ''}</div>
+    <span class="log-time">${entry.time}</span>
+  `;
+  list.insertBefore(el, list.firstChild);
+  if (list.children.length > 80) list.removeChild(list.lastChild);
+});
+
+function clearLog() {
+  document.getElementById('log-list').innerHTML =
+    '<div class="log-empty">Log cleared.</div>';
+  firstLog = true;
+}
+
+async function loadConfig() {
+  try {
+    const r = await fetch('/api/config');
+    const c = await r.json();
+    document.getElementById('srv-addr').textContent = `${c.host}:${c.port} · TLS`;
+    document.getElementById('cfg-bar').innerHTML =
+      `<span>host</span> ${c.host} &nbsp; <span>port</span> ${c.port} &nbsp; <span>user</span> ${c.user}`;
+    document.getElementById('f-from').value = c.user !== 'not set' ? c.user : '';
+  } catch(e) {}
+}
+
+async function sendEmail() {
+  const from  = document.getElementById('f-from').value.trim();
+  const to    = document.getElementById('f-to').value.trim();
+  const subj  = document.getElementById('f-subj').value.trim();
+  const body  = document.getElementById('f-body').value.trim();
+
+  if (!from || !to) { toast('Fill in From and To.', false); return; }
+
+  const btn = document.getElementById('send-btn');
+  btn.disabled = true;
+  btn.textContent = 'Sending…';
+
+  try {
+    const r = await fetch('/api/send', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ from, to, subject: subj, body })
+    });
+    const d = await r.json();
+    if (d.ok) {
+      toast('SMTP session started — watch the log!', true);
+    } else {
+      toast(d.error || 'Error sending.', false);
+    }
+  } catch(e) {
+    toast('Could not reach server.', false);
+  }
+
+  setTimeout(() => {
+    btn.disabled = false;
+    btn.textContent = '✉ Send via SMTP';
+  }, 4500);
+}
+
+function toast(msg, ok) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.className = ok ? 'ok' : 'err';
+  setTimeout(() => t.classList.add('hide'), 3000);
+}
+</script>
+</body>
+</html>
